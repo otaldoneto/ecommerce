@@ -1,3 +1,18 @@
 spring:
   application:
     name: api
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  data:
+    redis:
+      repositories:
+        enabled: false
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: ecommerce-api
+    expiration: 15m
+
