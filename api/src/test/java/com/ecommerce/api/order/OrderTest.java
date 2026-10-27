@@ -22,6 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
+import java.util.UUID;
 
 import java.math.BigDecimal;
 
@@ -98,9 +99,9 @@ class OrderTest {
         addToCart(ana, shirt, 2);
         addToCart(ana, sneakers, 1);
 
-        mockMvc.perform(post("/orders").header(HttpHeaders.AUTHORIZATION, ana))
+        checkout(ana)
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
+                    .andExpect(jsonPath("$.status").value("PENDING_PAYMENT"))
                 .andExpect(jsonPath("$.total").value(419.70))
                 .andExpect(jsonPath("$.items.length()").value(2));
 
@@ -109,6 +110,52 @@ class OrderTest {
 
         mockMvc.perform(get("/cart").header(HttpHeaders.AUTHORIZATION, ana))
                 .andExpect(jsonPath("$.items").isEmpty());
+    }
+
+    @Test
+    void checkoutRequiresAValidIdempotencyKey() throws Exception {
+        addToCart(ana, shirt, 1);
+
+        mockMvc.perform(post("/orders").header(HttpHeaders.AUTHORIZATION, ana))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/orders").header(HttpHeaders.AUTHORIZATION, ana).header("Idempotency-Key", "abc"))
+                .andExpect(status().isBadRequest());
+
+        assertThat(orderRepository.count()).isZero();
+    }
+
+    @Test
+    void retryWithSameKeyReturnsTheSameOrder() throws Exception {
+        UUID key = UUID.randomUUID();
+        addToCart(ana, shirt, 2);
+        String orderId = orderId(checkout(ana, key));
+
+        addToCart(ana, sneakers, 1);
+        checkout(ana, key)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(orderId))
+                .andExpect(jsonPath("$.items.length()").value(1));
+
+        assertThat(orderRepository.count()).isEqualTo(1);
+        assertThat(stockOf(shirt)).isEqualTo(3);
+        assertThat(stockOf(sneakers)).isEqualTo(2);
+
+        checkout(ana, UUID.randomUUID()).andExpect(status().isCreated());
+        assertThat(orderRepository.count()).isEqualTo(2);
+    }
+
+    @Test
+    void sameKeyFromDifferentUsersCreatesSeparateOrders() throws Exception {
+        UUID key = UUID.randomUUID();
+        addToCart(ana, shirt, 1);
+        addToCart(bruno, shirt, 1);
+
+        String anaOrder = orderId(checkout(ana, key));
+        String brunoOrder = orderId(checkout(bruno, key));
+
+        assertThat(anaOrder).isNotEqualTo(brunoOrder);
+        assertThat(stockOf(shirt)).isEqualTo(3);
     }
 
     @Test
@@ -206,7 +253,12 @@ class OrderTest {
     }
 
     private ResultActions checkout(String token) throws Exception {
-        return mockMvc.perform(post("/orders").header(HttpHeaders.AUTHORIZATION, token));
+        return checkout(token, UUID.randomUUID());
+    }
+
+    private ResultActions checkout(String token, UUID idempotencyKey) throws Exception {
+        return mockMvc.perform(post("/orders").header(HttpHeaders.AUTHORIZATION, token)
+                .header("Idempotency-Key", idempotencyKey.toString()));
     }
 
     private static String orderId(ResultActions result) throws Exception {

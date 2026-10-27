@@ -31,6 +31,9 @@ public class Order {
     @Column(name = "user_id", nullable = false, updatable = false)
     private UUID userId;
 
+    @Column(name = "idempotency_key", updatable = false)
+    private UUID idempotencyKey;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private OrderStatus status = OrderStatus.PENDING_PAYMENT;
@@ -50,8 +53,9 @@ public class Order {
     protected Order() {
     }
 
-    public Order(UUID userId) {
+    public Order(UUID userId, UUID idempotencyKey) {
         this.userId = userId;
+        this.idempotencyKey = idempotencyKey;
     }
 
     public void addItem(UUID productId, String productName, BigDecimal unitPrice, int quantity) {

@@ -10,8 +10,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestHeader;
 
 import java.util.UUID;
 
@@ -26,9 +27,11 @@ public class OrderController {
     }
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public OrderResponse checkout(@AuthenticationPrincipal Jwt jwt) {
-        return orderService.checkout(userId(jwt));
+    public ResponseEntity<OrderResponse> checkout(@AuthenticationPrincipal Jwt jwt,
+                                                  @RequestHeader("Idempotency-Key") UUID idempotencyKey) {
+        OrderService.CheckoutResult result = orderService.checkout(userId(jwt), idempotencyKey);
+        HttpStatus status = result.created() ? HttpStatus.CREATED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(result.order());
     }
 
     @GetMapping

@@ -14,6 +14,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.dao.DataIntegrityViolationException;
+import java.util.Optional;
 
 import java.util.Comparator;
 import java.util.Map;
@@ -36,7 +38,12 @@ public class OrderService {
     }
 
     @Transactional
-    public OrderResponse checkout(UUID userId) {
+    public CheckoutResult checkout(UUID userId, UUID idempotencyKey) {
+        Optional<Order> previous = orderRepository.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
+        if (previous.isPresent()) {
+            return new CheckoutResult(OrderResponse.from(previous.get()), false);
+        }
+
         // Sorted by product id so concurrent checkouts lock rows in the same order and can't deadlock.
         Map<UUID, Integer> cart = new TreeMap<>(cartService.items(userId));
         if (cart.isEmpty()) {
@@ -46,7 +53,7 @@ public class OrderService {
         Map<UUID, Product> products = productRepository.findAllById(cart.keySet()).stream()
                 .collect(Collectors.toMap(Product::getId, Function.identity()));
 
-        Order order = new Order(userId);
+        Order order = new Order(userId, idempotencyKey);
         cart.forEach((productId, quantity) -> {
             Product product = products.get(productId);
             if (product == null || !product.isActive()) {
@@ -58,9 +65,15 @@ public class OrderService {
             order.addItem(productId, product.getName(), product.getPrice(), quantity);
         });
 
-        Order saved = orderRepository.save(order);
+        Order saved;
+        try {
+            saved = orderRepository.saveAndFlush(order);
+        } catch (DataIntegrityViolationException ex) {
+            throw new ConflictException("A checkout with this Idempotency-Key is already in progress");
+        }
+
         clearCartAfterCommit(userId);
-        return OrderResponse.from(saved);
+        return new CheckoutResult(OrderResponse.from(saved), true);
     }
 
     @Transactional(readOnly = true)
@@ -87,6 +100,9 @@ public class OrderService {
                 .sorted(Comparator.comparing(OrderItem::getProductId))
                 .forEach(item -> productRepository.incrementStock(item.getProductId(), item.getQuantity()));
         return OrderResponse.from(order);
+    }
+
+    public record CheckoutResult(OrderResponse order, boolean created) {
     }
 
     private void clearCartAfterCommit(UUID userId) {

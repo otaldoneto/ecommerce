@@ -89,7 +89,7 @@ class OrderConcurrencyTest {
                 .toList();
 
         List<Boolean> results = runConcurrently(buyers.stream()
-                .<Callable<Boolean>>map(userId -> () -> succeeded(() -> orderService.checkout(userId)))
+                .<Callable<Boolean>>map(userId -> () -> succeeded(() -> orderService.checkout(userId, UUID.randomUUID())))
                 .toList());
 
         assertThat(results).containsOnlyOnce(true);
@@ -101,7 +101,7 @@ class OrderConcurrencyTest {
     void concurrentCancelsRestoreStockOnce() throws Exception {
         UUID userId = userRepository.save(new User("Ana", "ana@example.com", "unused", Role.CUSTOMER)).getId();
         cartService.setQuantity(userId, lastUnit.getId(), 1);
-        UUID orderId = orderService.checkout(userId).id();
+        UUID orderId = orderService.checkout(userId, UUID.randomUUID()).order().id();
 
         List<Boolean> results = runConcurrently(IntStream.range(0, THREADS)
                 .<Callable<Boolean>>mapToObj(i -> () -> succeeded(() -> orderService.cancel(userId, orderId)))
@@ -109,6 +109,28 @@ class OrderConcurrencyTest {
 
         assertThat(results).containsOnlyOnce(true);
         assertThat(productRepository.findById(lastUnit.getId()).orElseThrow().getStock()).isEqualTo(1);
+    }
+
+    @Test
+    void concurrentRetriesWithSameKeyCreateOneOrder() throws Exception {
+        Product shirt = productRepository.save(new Product("Camiseta Preta", "camiseta-preta", "Algodão", new BigDecimal("59.90"), 10, lastUnit.getCategory()));
+        UUID userId = userRepository.save(new User("Ana", "ana@example.com", "unused", Role.CUSTOMER)).getId();
+        cartService.setQuantity(userId, shirt.getId(), 1);
+        UUID key = UUID.randomUUID();
+
+        List<Boolean> created = runConcurrently(IntStream.range(0, THREADS)
+                .<Callable<Boolean>>mapToObj(i -> () -> {
+                    try {
+                        return orderService.checkout(userId, key).created();
+                    } catch (ConflictException ex) {
+                        return false;
+                    }
+                })
+                .toList());
+
+        assertThat(created).containsOnlyOnce(true);
+        assertThat(orderRepository.count()).isEqualTo(1);
+        assertThat(productRepository.findById(shirt.getId()).orElseThrow().getStock()).isEqualTo(9);
     }
 
     private static boolean succeeded(Runnable action) {
