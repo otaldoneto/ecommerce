@@ -23,7 +23,7 @@ public class JwtService {
         this.properties = properties;
     }
 
-    public TokenResponse generateAccessToken(User user) {
+    public String generateAccessToken(User user) {
         Instant now = Instant.now();
 
         JwtClaimsSet claims = JwtClaimsSet.builder()
@@ -35,7 +35,10 @@ public class JwtService {
                 .build();
 
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
-        String token = encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
-        return new TokenResponse(token, "Bearer", properties.expiration().toSeconds());
+        return encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
+    }
+
+    public long expiresInSeconds() {
+        return properties.expiration().toSeconds();
     }
 }

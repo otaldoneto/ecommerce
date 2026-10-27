@@ -15,4 +15,7 @@ app:
     secret: ${JWT_SECRET}
     issuer: ecommerce-api
     expiration: 15m
+  refresh-token:
+    ttl: 7d
+    session-max-lifetime: 30d
 

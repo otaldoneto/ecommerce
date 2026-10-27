@@ -21,12 +21,15 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
     private final String dummyPasswordHash;
 
-    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService) {
+    public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService,
+                       RefreshTokenService refreshTokenService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.refreshTokenService = refreshTokenService;
         this.dummyPasswordHash = passwordEncoder.encode("dummy-password-for-unknown-emails");
     }
 
@@ -61,7 +64,26 @@ public class AuthService {
             throw new UnauthorizedException("Invalid email or password");
         }
 
-        return jwtService.generateAccessToken(user.get());
+        User authenticated = user.get();
+        return tokenResponse(authenticated, refreshTokenService.create(authenticated.getId()));
+    }
+
+    @Transactional(readOnly = true)
+    public TokenResponse refresh(RefreshRequest request) {
+        RefreshTokenService.Rotation rotation = refreshTokenService.rotate(request.refreshToken());
+
+        User user = userRepository.findById(rotation.userId())
+                .orElseThrow(() -> new UnauthorizedException("Invalid refresh token"));
+
+        return tokenResponse(user, rotation.refreshToken());
+    }
+
+    public void logout(RefreshRequest request) {
+        refreshTokenService.revoke(request.refreshToken());
+    }
+
+    public void logoutAll(UUID userId) {
+        refreshTokenService.revokeAll(userId);
     }
 
     @Transactional(readOnly = true)
@@ -69,5 +91,10 @@ public class AuthService {
         return userRepository.findById(userId)
                 .map(UserResponse::from)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    }
+
+    private TokenResponse tokenResponse(User user, String refreshToken) {
+        return new TokenResponse(jwtService.generateAccessToken(user), refreshToken, "Bearer",
+                jwtService.expiresInSeconds());
     }
 }
