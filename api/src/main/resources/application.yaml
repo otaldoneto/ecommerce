@@ -6,6 +6,9 @@ spring:
     hibernate:
       ddl-auto: validate
   data:
+    web:
+      pageable:
+        max-page-size: 50
     redis:
       repositories:
         enabled: false
