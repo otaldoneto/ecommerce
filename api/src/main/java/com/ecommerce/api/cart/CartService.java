@@ -54,6 +54,12 @@ public class CartService {
         return CartResponse.of(items);
     }
 
+    public Map<UUID, Integer> items(UUID userId) {
+        return hash().entries(key(userId)).entrySet().stream()
+                .collect(Collectors.toMap(entry -> UUID.fromString(entry.getKey()),
+                        entry -> Integer.parseInt(entry.getValue())));
+    }
+
     public CartResponse setQuantity(UUID userId, UUID productId, int quantity) {
         Product product = productRepository.findById(productId)
                 .filter(Product::isActive)
