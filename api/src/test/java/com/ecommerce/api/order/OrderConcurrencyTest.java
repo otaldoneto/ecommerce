@@ -112,23 +112,18 @@ class OrderConcurrencyTest {
     }
 
     @Test
-    void concurrentRetriesWithSameKeyCreateOneOrder() throws Exception {
+    void concurrentRetriesWithSameKeyReturnTheSameOrder() throws Exception {
         Product shirt = productRepository.save(new Product("Camiseta Preta", "camiseta-preta", "Algodão", new BigDecimal("59.90"), 10, lastUnit.getCategory()));
         UUID userId = userRepository.save(new User("Ana", "ana@example.com", "unused", Role.CUSTOMER)).getId();
         cartService.setQuantity(userId, shirt.getId(), 1);
         UUID key = UUID.randomUUID();
 
-        List<Boolean> created = runConcurrently(IntStream.range(0, THREADS)
-                .<Callable<Boolean>>mapToObj(i -> () -> {
-                    try {
-                        return orderService.checkout(userId, key).created();
-                    } catch (ConflictException ex) {
-                        return false;
-                    }
-                })
+        List<OrderService.CheckoutResult> results = runConcurrently(IntStream.range(0, THREADS)
+                .<Callable<OrderService.CheckoutResult>>mapToObj(i -> () -> orderService.checkout(userId, key))
                 .toList());
 
-        assertThat(created).containsOnlyOnce(true);
+        assertThat(results).filteredOn(OrderService.CheckoutResult::created).hasSize(1);
+        assertThat(results).extracting(result -> result.order().id()).containsOnly(results.getFirst().order().id());
         assertThat(orderRepository.count()).isEqualTo(1);
         assertThat(productRepository.findById(shirt.getId()).orElseThrow().getStock()).isEqualTo(9);
     }
@@ -143,26 +138,26 @@ class OrderConcurrencyTest {
     }
 
     // The latch holds every thread at the starting line, so they all hit the database at the same moment.
-    private static List<Boolean> runConcurrently(List<Callable<Boolean>> tasks) throws Exception {
+    private static <T> List<T> runConcurrently(List<Callable<T>> tasks) throws Exception {
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(tasks.size());
-        try {
-            List<Future<Boolean>> futures = new ArrayList<>();
-            for (Callable<Boolean> task : tasks) {
-                futures.add(executor.submit(() -> {
-                    start.await();
-                    return task.call();
-                }));
-            }
-            start.countDown();
-
-            List<Boolean> results = new ArrayList<>();
-            for (Future<Boolean> future : futures) {
-                results.add(future.get(30, TimeUnit.SECONDS));
-            }
-            return results;
-        } finally {
-            executor.shutdownNow();
+        List<Future<T>> futures = new ArrayList<>();
+        for (Callable<T> task : tasks) {
+            futures.add(executor.submit(() -> {
+                start.await();
+                return task.call();
+            }));
         }
+        start.countDown();
+
+        // Waiting for every thread first keeps a failed task from leaving the others running into the cleanup.
+        executor.shutdown();
+        assertThat(executor.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+
+        List<T> results = new ArrayList<>();
+        for (Future<T> future : futures) {
+            results.add(future.get());
+        }
+        return results;
     }
 }

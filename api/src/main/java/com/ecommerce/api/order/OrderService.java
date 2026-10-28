@@ -7,6 +7,8 @@ import com.ecommerce.api.shared.error.BadRequestException;
 import com.ecommerce.api.shared.error.ConflictException;
 import com.ecommerce.api.shared.error.ResourceNotFoundException;
 import com.ecommerce.api.shared.web.PageResponse;
+import com.ecommerce.api.user.UserRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -14,13 +16,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.dao.DataIntegrityViolationException;
-import java.util.Optional;
 
-import java.util.Comparator;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.UUID;
+import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -30,15 +27,21 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final CartService cartService;
+    private final UserRepository userRepository;
 
-    public OrderService(OrderRepository orderRepository, ProductRepository productRepository, CartService cartService) {
+    public OrderService(OrderRepository orderRepository, ProductRepository productRepository, CartService cartService,
+                        UserRepository userRepository) {
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
         this.cartService = cartService;
+        this.userRepository = userRepository;
     }
 
     @Transactional
     public CheckoutResult checkout(UUID userId, UUID idempotencyKey) {
+        // One checkout per user at a time: a retry waits for the first attempt to commit and then finds its order.
+        userRepository.findLockedById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         Optional<Order> previous = orderRepository.findByUserIdAndIdempotencyKey(userId, idempotencyKey);
         if (previous.isPresent()) {
             return new CheckoutResult(OrderResponse.from(previous.get()), false);
